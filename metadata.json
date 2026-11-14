@@ -1,0 +1,6 @@
+{
+  "name": "AnchorSG",
+  "description": "Singapore digital anchor platform connecting commuters, tourists, and corporate teams with Grab, Gojek, Ryde, Tada, and Zig alongside a personalised Singapore news briefing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
