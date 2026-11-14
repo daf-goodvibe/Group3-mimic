@@ -8,6 +8,7 @@ import {
   RefreshCw,
   Search,
 } from 'lucide-react';
+import { NEWS_ARTICLES } from '../data/platformData';
 import { EditorialIllustration } from './EditorialIllustrations';
 
 export interface LiveNewsItem {
@@ -79,6 +80,27 @@ const PUSH_CHANNELS = [
   },
 ];
 
+function buildFallbackItems(topic: NewsTopic): LiveNewsItem[] {
+  const matching =
+    topic === 'Top Stories'
+      ? NEWS_ARTICLES
+      : NEWS_ARTICLES.filter((a) => a.topic === topic);
+  const list = matching.length > 0 ? matching : NEWS_ARTICLES;
+  return list.map((a) => ({
+    id: a.id,
+    title: a.title,
+    summary: a.summary,
+    url: `https://news.google.com/search?q=${encodeURIComponent(a.title)}&hl=en-SG&gl=SG&ceid=SG:en`,
+    imageUrl: null,
+    sourceFaviconUrl: null,
+    source: a.source,
+    publishedAt: '',
+    publishedAgo: a.publishedAgo,
+    topic: a.topic,
+    illustration: a.illustration,
+  }));
+}
+
 function ArticleThumbnail({
   article,
   className = '',
@@ -142,29 +164,49 @@ export const NewsFeedSection: React.FC<NewsFeedSectionProps> = ({
   const [portalUrl, setPortalUrl] = useState<string>(TOPIC_GOOGLE_NEWS_LINKS['Top Stories']);
   const [googleLogoUrl, setGoogleLogoUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
+  const [usingFallback, setUsingFallback] = useState<boolean>(false);
 
   const fetchFeed = useCallback(async (topic: NewsTopic) => {
     setLoading(true);
-    setError(null);
-    try {
+    setUsingFallback(false);
+
+    const attemptFetch = async () => {
       const res = await fetch(`/api/news?topic=${encodeURIComponent(topic)}`);
-      const data = (await res.json()) as {
+      const rawText = await res.text();
+      let parsed: {
         items?: LiveNewsItem[];
         googleNewsPortalUrl?: string;
         googleLogoUrl?: string | null;
         error?: string;
-      };
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to load Google News feed');
+      } | null = null;
+
+      try {
+        parsed = JSON.parse(rawText);
+      } catch {
+        throw new Error('Feed endpoint returned non-JSON response');
+      }
+
+      if (!res.ok || !parsed?.items || parsed.items.length === 0) {
+        throw new Error(parsed?.error || 'Live feed temporarily unavailable');
+      }
+      return parsed;
+    };
+
+    try {
+      let data;
+      try {
+        data = await attemptFetch();
+      } catch {
+        await new Promise((r) => setTimeout(r, 500));
+        data = await attemptFetch();
       }
       setArticles(data.items ?? []);
       setPortalUrl(data.googleNewsPortalUrl || TOPIC_GOOGLE_NEWS_LINKS[topic]);
       setGoogleLogoUrl(data.googleLogoUrl ?? null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to fetch Google News feed.');
-      setArticles([]);
+    } catch {
+      setArticles(buildFallbackItems(topic));
       setPortalUrl(TOPIC_GOOGLE_NEWS_LINKS[topic]);
+      setUsingFallback(true);
     } finally {
       setLoading(false);
     }
@@ -207,7 +249,9 @@ export const NewsFeedSection: React.FC<NewsFeedSectionProps> = ({
                 className="w-4 h-4 rounded-xs object-contain"
               />
             )}
-            <span>Live Singapore Headlines</span>
+            <span>
+              {usingFallback ? 'Singapore Google News Briefings' : 'Live Singapore Headlines'}
+            </span>
             <span aria-hidden="true">·</span>
             <a
               href="https://news.google.com/?hl=en-SG&gl=SG&ceid=SG:en"
@@ -314,32 +358,6 @@ export const NewsFeedSection: React.FC<NewsFeedSectionProps> = ({
                     <div className="h-5 w-full bg-slate-200 rounded" />
                   </div>
                 ))}
-              </div>
-            </div>
-          ) : error ? (
-            <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center">
-              <Newspaper className="w-8 h-8 text-slate-400 mx-auto mb-3" aria-hidden="true" />
-              <h3 className="font-display text-base font-semibold text-slate-900">
-                Could not load live Google News headlines
-              </h3>
-              <p className="text-sm text-slate-600 mt-1">{error}</p>
-              <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => fetchFeed(activeTopic)}
-                  className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg cursor-pointer"
-                >
-                  Try Again
-                </button>
-                <a
-                  href={portalUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg"
-                >
-                  <span>Browse directly on Google News</span>
-                  <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
-                </a>
               </div>
             </div>
           ) : filteredArticles.length === 0 ? (

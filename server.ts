@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 import express from 'express';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
@@ -322,9 +323,22 @@ function parseGoogleNewsRss(
   return { items, googleLogoUrl };
 }
 
+function getRuntimeMapsApiKey(): string {
+  return (
+    process.env.VITE_GOOGLE_MAPS_API_KEY ||
+    process.env.GOOGLE_MAPS_API_KEY ||
+    ''
+  ).trim();
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
+
+  app.get('/api/maps-config', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ apiKey: getRuntimeMapsApiKey() });
+  });
 
   app.get('/api/news', async (req, res) => {
     const requestedTopic = typeof req.query.topic === 'string' ? req.query.topic : 'Top Stories';
@@ -442,9 +456,23 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.resolve(__dirname, 'dist');
-    app.use(express.static(distPath));
+    const distIndexPath = path.join(distPath, 'index.html');
+    app.use(express.static(distPath, { index: false }));
     app.get('*', (_req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+      try {
+        const html = fs.readFileSync(distIndexPath, 'utf8');
+        const runtimeScript = `<script>window.__ANCHORSG_CONFIG__=${JSON.stringify({
+          googleMapsApiKey: getRuntimeMapsApiKey(),
+        })};</script>`;
+        const injectedHtml = html.includes('</head>')
+          ? html.replace('</head>', `${runtimeScript}</head>`)
+          : `${runtimeScript}${html}`;
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store');
+        res.send(injectedHtml);
+      } catch {
+        res.sendFile(distIndexPath);
+      }
     });
   }
 

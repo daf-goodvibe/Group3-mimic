@@ -59,8 +59,23 @@ interface ComputedRouteObj {
   createPolylines: () => PolylineObj[];
 }
 
-const GOOGLE_MAPS_API_KEY =
-  import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
+declare global {
+  interface Window {
+    __ANCHORSG_CONFIG__?: {
+      googleMapsApiKey?: string;
+    };
+  }
+}
+
+function getInitialMapsApiKey(): string {
+  const viteKey = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '').trim();
+  if (viteKey) return viteKey;
+  if (typeof window !== 'undefined') {
+    const runtimeKey = (window.__ANCHORSG_CONFIG__?.googleMapsApiKey || '').trim();
+    if (runtimeKey) return runtimeKey;
+  }
+  return '';
+}
 
 function RouteOverlay({
   originName,
@@ -249,12 +264,45 @@ export const GoogleRouteMap: React.FC<GoogleRouteMapProps> = ({
   heightClass = 'h-[360px] sm:h-[420px]',
   onRouteStats,
 }) => {
+  const [apiKey, setApiKey] = useState<string>(() => getInitialMapsApiKey());
+  const [checkingKey, setCheckingKey] = useState<boolean>(() => !getInitialMapsApiKey());
   const [routeStatus, setRouteStatus] = useState<{
     loading: boolean;
     error: string | null;
     distanceKm?: number;
     durationMin?: number;
   }>({ loading: false, error: null });
+
+  useEffect(() => {
+    if (apiKey) {
+      setCheckingKey(false);
+      return;
+    }
+    let cancelled = false;
+    fetch('/api/maps-config')
+      .then((res) => res.text())
+      .then((text) => {
+        if (cancelled) return;
+        try {
+          const parsed = JSON.parse(text) as { apiKey?: string };
+          const fetchedKey = (parsed.apiKey || '').trim();
+          if (fetchedKey) {
+            setApiKey(fetchedKey);
+          }
+        } catch {
+          // Ignore non-JSON response in static preview
+        }
+      })
+      .catch(() => {
+        // Ignore network error
+      })
+      .finally(() => {
+        if (!cancelled) setCheckingKey(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [apiKey]);
 
   return (
     <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
@@ -294,7 +342,14 @@ export const GoogleRouteMap: React.FC<GoogleRouteMapProps> = ({
 
       {/* Explicit-Height Map Canvas */}
       <div className={`relative w-full ${heightClass} bg-slate-100`}>
-        {!GOOGLE_MAPS_API_KEY ? (
+        {checkingKey ? (
+          <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-slate-100">
+            <MapPin className="w-7 h-7 text-emerald-600 mb-2" aria-hidden="true" />
+            <p className="text-sm font-semibold text-slate-900">
+              Loading Singapore route map...
+            </p>
+          </div>
+        ) : !apiKey ? (
           <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-slate-100">
             <MapPin className="w-7 h-7 text-slate-400 mb-2" aria-hidden="true" />
             <p className="text-sm font-semibold text-slate-900">
@@ -305,7 +360,7 @@ export const GoogleRouteMap: React.FC<GoogleRouteMapProps> = ({
             </p>
           </div>
         ) : (
-          <APIProvider apiKey={GOOGLE_MAPS_API_KEY} language="en" region="SG">
+          <APIProvider apiKey={apiKey} language="en" region="SG">
             <MapStatusGuard>
               <GoogleMap
                 mapId="DEMO_MAP_ID"
