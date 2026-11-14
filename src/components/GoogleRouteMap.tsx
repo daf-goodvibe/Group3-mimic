@@ -10,7 +10,7 @@ import {
   useMap,
   useMapsLibrary,
 } from '@vis.gl/react-google-maps';
-import { AlertCircle, MapPin, Navigation } from 'lucide-react';
+import { AlertCircle, ExternalLink, MapPin, Navigation } from 'lucide-react';
 
 interface GoogleRouteMapProps {
   originName: string;
@@ -351,13 +351,30 @@ export const GoogleRouteMap: React.FC<GoogleRouteMapProps> = ({
           </div>
         ) : !apiKey ? (
           <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-slate-100">
-            <MapPin className="w-7 h-7 text-slate-400 mb-2" aria-hidden="true" />
-            <p className="text-sm font-semibold text-slate-900">
-              Google Maps API key not detected
-            </p>
-            <p className="text-xs text-slate-600 mt-1 max-w-sm">
-              Enable Google Maps in AI Studio settings and reload to display interactive Singapore routes.
-            </p>
+            <div className="max-w-md w-full bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-3">
+              <div className="flex items-center justify-center gap-2 text-emerald-700 font-semibold text-xs">
+                <MapPin className="w-4 h-4 shrink-0" aria-hidden="true" />
+                <span>Singapore Route Summary</span>
+              </div>
+              <p className="text-sm font-semibold text-slate-900">
+                {originName.split(' (')[0]} → {destinationName.split(' (')[0]}
+              </p>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                {originTip}
+              </p>
+              <a
+                href={`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(originAddress)}&destination=${encodeURIComponent(destinationAddress)}&travelmode=driving`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition-colors"
+              >
+                <span>Open Route in Google Maps</span>
+                <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
+              </a>
+              <p className="text-[11px] text-slate-500 pt-2 border-t border-slate-100">
+                Embedded interactive map requires <code className="font-mono text-slate-700">VITE_GOOGLE_MAPS_API_KEY</code> in your deployed host environment (or republishing in AI Studio).
+              </p>
+            </div>
           </div>
         ) : (
           <APIProvider apiKey={apiKey} language="en" region="SG">

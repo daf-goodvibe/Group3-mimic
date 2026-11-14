@@ -40,6 +40,8 @@ const TOPIC_CONFIGS: Record<string, TopicConfig> = {
     illustration: 'skyline',
     companionRssUrls: [
       'https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=10416',
+      'https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=6936',
+      'https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=6794',
       'https://mothership.sg/feed/',
     ],
     keywords: [],
@@ -53,8 +55,9 @@ const TOPIC_CONFIGS: Record<string, TopicConfig> = {
     companionRssUrls: [
       'https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=10416',
       'https://mothership.sg/feed/',
+      'https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=6794',
     ],
-    keywords: ['mrt', 'lta', 'bus', 'train', 'traffic', 'road', 'car', 'taxi', 'grab', 'gojek', 'erp', 'cycling', 'changi', 'airport', 'rail', 'expressway'],
+    keywords: ['mrt', 'lta', 'bus', 'train', 'traffic', 'road', 'car', 'taxi', 'grab', 'gojek', 'erp', 'cycling', 'changi', 'airport', 'rail', 'expressway', 'transport', 'commute', 'coe'],
   },
   'Business & Tech': {
     googleRssUrl:
@@ -65,8 +68,9 @@ const TOPIC_CONFIGS: Record<string, TopicConfig> = {
     companionRssUrls: [
       'https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=6936',
       'https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=10416',
+      'https://mothership.sg/feed/',
     ],
-    keywords: ['ai', 'tech', 'bank', 'fintech', 'market', 'economy', 'trade', 'nvidia', 'mas', 'singapore', 'firm', 'company', 'investment'],
+    keywords: ['ai', 'tech', 'bank', 'fintech', 'market', 'economy', 'trade', 'nvidia', 'mas', 'singapore', 'firm', 'company', 'investment', 'chip', 'startup', 'business'],
   },
   'Travel & Dining': {
     googleRssUrl:
@@ -77,8 +81,9 @@ const TOPIC_CONFIGS: Record<string, TopicConfig> = {
     companionRssUrls: [
       'https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=10416',
       'https://mothership.sg/feed/',
+      'https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=6794',
     ],
-    keywords: ['changi', 'flight', 'airline', 'sentosa', 'hotel', 'restaurant', 'food', 'ramen', 'dining', 'tourist', 'travel', 'sia', 'scoot'],
+    keywords: ['changi', 'flight', 'airline', 'sentosa', 'hotel', 'restaurant', 'food', 'ramen', 'dining', 'tourist', 'travel', 'sia', 'scoot', 'cafe', 'mall', 'closing'],
   },
   'Singapore Culture': {
     googleRssUrl:
@@ -90,7 +95,7 @@ const TOPIC_CONFIGS: Record<string, TopicConfig> = {
       'https://mothership.sg/feed/',
       'https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=10416',
     ],
-    keywords: ['festival', 'art', 'heritage', 'culture', 'museum', 'park', 'concert', 'community', 'singapore', 'school', 'family'],
+    keywords: ['festival', 'art', 'heritage', 'culture', 'museum', 'park', 'concert', 'community', 'singapore', 'school', 'family', 'medal', 'olympics'],
   },
   'Corporate Policy': {
     googleRssUrl:
@@ -101,8 +106,9 @@ const TOPIC_CONFIGS: Record<string, TopicConfig> = {
     companionRssUrls: [
       'https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=6936',
       'https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=10416',
+      'https://mothership.sg/feed/',
     ],
-    keywords: ['work', 'job', 'salary', 'mom', 'hr', 'corporate', 'office', 'policy', 'budget', 'tax', 'gst', 'singapore'],
+    keywords: ['work', 'job', 'salary', 'mom', 'hr', 'corporate', 'office', 'policy', 'budget', 'tax', 'gst', 'singapore', 'firm', 'worker'],
   },
 };
 
@@ -119,7 +125,17 @@ function decodeXmlEntities(input: string): string {
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
+    .replace(/&apos;|&#0*39;|&#x0*27;/gi, "'")
+    .replace(/&#0*8217;|&#0*8216;/g, "'")
+    .replace(/&#0*8220;|&#0*8221;/g, '"')
+    .replace(/&#(\d+);/g, (_m, dec) => {
+      const code = Number(dec);
+      return Number.isFinite(code) ? String.fromCharCode(code) : '';
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (_m, hex) => {
+      const code = parseInt(hex, 16);
+      return Number.isFinite(code) ? String.fromCharCode(code) : '';
+    })
     .replace(/&nbsp;/g, ' ')
     .replace(/<[^>]+>/g, ' ')
     .replace(/\s+/g, ' ')
@@ -382,14 +398,19 @@ async function startServer() {
 
       // Build photo-rich items from matched companion stories whose titles match topic keywords
       const usedTitles = new Set(googleItems.map((it) => it.title.toLowerCase()));
+      const seenImages = new Set(
+        googleItems.map((it) => it.imageUrl).filter((u): u is string => Boolean(u))
+      );
       const matchingCompanions = companions
         .filter((c) => {
           if (usedTitles.has(c.title.toLowerCase())) return false;
+          if (seenImages.has(c.imageUrl)) return false;
+          seenImages.add(c.imageUrl);
           if (topicConfig.keywords.length === 0) return true;
           const lower = `${c.title} ${c.summary}`.toLowerCase();
           return topicConfig.keywords.some((kw) => lower.includes(kw));
         })
-        .slice(0, 6)
+        .slice(0, 10)
         .map((c, idx): LiveNewsItem => {
           const gnSearchUrl = `https://news.google.com/search?q=${encodeURIComponent(c.title)}&hl=en-SG&gl=SG&ceid=SG:en`;
           const hash = crypto.createHash('sha1').update(gnSearchUrl).digest('hex').slice(0, 16);

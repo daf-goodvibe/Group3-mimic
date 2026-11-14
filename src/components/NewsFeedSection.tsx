@@ -80,25 +80,136 @@ const PUSH_CHANNELS = [
   },
 ];
 
+const GOOGLE_NEWS_LOGO_URL =
+  'https://lh3.googleusercontent.com/-DR60l-K8vnyi99NZovm9HlXyZwQ85GMDxiwJWzoasZYCUrPuUM_P_4Rb7ei03j-0nRs0c4F=w256';
+
+const TOPIC_GOOGLE_RSS_MAP: Record<NewsTopic, string> = {
+  'Top Stories': 'https://news.google.com/rss?hl=en-SG&gl=SG&ceid=SG:en',
+  'Transport & ERP':
+    'https://news.google.com/rss/search?q=Singapore+transport+OR+MRT+OR+LTA+OR+Grab&hl=en-SG&gl=SG&ceid=SG:en',
+  'Business & Tech':
+    'https://news.google.com/rss/search?q=Singapore+business+OR+fintech+OR+economy&hl=en-SG&gl=SG&ceid=SG:en',
+  'Travel & Dining':
+    'https://news.google.com/rss/search?q=Singapore+Changi+OR+Sentosa+OR+tourism+OR+dining&hl=en-SG&gl=SG&ceid=SG:en',
+  'Singapore Culture':
+    'https://news.google.com/rss/search?q=Singapore+events+OR+arts+OR+heritage+OR+lifestyle&hl=en-SG&gl=SG&ceid=SG:en',
+  'Corporate Policy':
+    'https://news.google.com/rss/search?q=Singapore+workplace+OR+HR+OR+corporate+OR+MOM&hl=en-SG&gl=SG&ceid=SG:en',
+};
+
+const TOPIC_CNA_RSS_MAP: Record<NewsTopic, string> = {
+  'Top Stories': 'https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=10416',
+  'Transport & ERP': 'https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=10416',
+  'Business & Tech': 'https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=6936',
+  'Travel & Dining': 'https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=10416',
+  'Singapore Culture': 'https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=10416',
+  'Corporate Policy': 'https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=6936',
+};
+
+const SOURCE_DOMAIN_MAP: Record<string, string> = {
+  'The Straits Times': 'straitstimes.com',
+  CNA: 'channelnewsasia.com',
+  'The Business Times': 'businesstimes.com.sg',
+  'Today Online': 'todayonline.com',
+  'Tech in Asia': 'techinasia.com',
+  'Time Out Singapore': 'timeout.com',
+  Mothership: 'mothership.sg',
+};
+
+function formatRelativePubDate(pubDate: string): string {
+  const ms = Date.parse(pubDate.replace(' ', 'T') + (pubDate.includes('GMT') || pubDate.includes('Z') ? '' : 'Z'));
+  if (Number.isNaN(ms)) return 'Recent';
+  const mins = Math.max(1, Math.floor((Date.now() - ms) / 60000));
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+async function fetchDirectGoogleNewsFallback(topic: NewsTopic): Promise<LiveNewsItem[]> {
+  const [gnRes, cnaRes] = await Promise.all([
+    fetch(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(TOPIC_GOOGLE_RSS_MAP[topic])}`),
+    fetch(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(TOPIC_CNA_RSS_MAP[topic])}`),
+  ]);
+
+  const gnJson = gnRes.ok ? await gnRes.json().catch(() => null) : null;
+  const cnaJson = cnaRes.ok ? await cnaRes.json().catch(() => null) : null;
+
+  const cnaItems: Array<{ title?: string; description?: string; thumbnail?: string; pubDate?: string }> =
+    Array.isArray(cnaJson?.items) ? cnaJson.items : [];
+  const gnItems: Array<{ title?: string; link?: string; pubDate?: string; description?: string }> =
+    Array.isArray(gnJson?.items) ? gnJson.items : [];
+
+  const illustrations: LiveNewsItem['illustration'][] = ['skyline', 'mrt', 'changi', 'cbd'];
+  const combined: LiveNewsItem[] = [];
+
+  for (let i = 0; i < Math.min(cnaItems.length, 6); i++) {
+    const c = cnaItems[i];
+    if (!c?.title || !c.thumbnail) continue;
+    combined.push({
+      id: `gn-cna-${topic}-${i}`,
+      title: c.title,
+      summary: (c.description || '').replace(/<[^>]+>/g, ' ').trim() || 'Live Singapore reporting via Google News.',
+      url: `https://news.google.com/search?q=${encodeURIComponent(c.title)}&hl=en-SG&gl=SG&ceid=SG:en`,
+      imageUrl: c.thumbnail,
+      sourceFaviconUrl: 'https://www.google.com/s2/favicons?domain=channelnewsasia.com&sz=64',
+      source: 'CNA',
+      publishedAt: c.pubDate || '',
+      publishedAgo: formatRelativePubDate(c.pubDate || ''),
+      topic,
+      illustration: illustrations[i % illustrations.length],
+    });
+  }
+
+  for (let i = 0; i < Math.min(gnItems.length, 6); i++) {
+    const g = gnItems[i];
+    if (!g?.title || !g.link) continue;
+    const dashIdx = g.title.lastIndexOf(' - ');
+    const cleanTitle = dashIdx > 12 ? g.title.slice(0, dashIdx).trim() : g.title;
+    const source = dashIdx > 12 ? g.title.slice(dashIdx + 3).trim() : 'Google News';
+    const domain = SOURCE_DOMAIN_MAP[source] ?? 'news.google.com';
+    combined.push({
+      id: `gn-rss-${topic}-${i}`,
+      title: cleanTitle,
+      summary: `Read full reporting from ${source} on Google News.`,
+      url: g.link.startsWith('https://news.google.com')
+        ? g.link
+        : `https://news.google.com/search?q=${encodeURIComponent(cleanTitle)}&hl=en-SG&gl=SG&ceid=SG:en`,
+      imageUrl: cnaItems[i]?.thumbnail || null,
+      sourceFaviconUrl: `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`,
+      source,
+      publishedAt: g.pubDate || '',
+      publishedAgo: formatRelativePubDate(g.pubDate || ''),
+      topic,
+      illustration: illustrations[i % illustrations.length],
+    });
+  }
+
+  return combined;
+}
+
 function buildFallbackItems(topic: NewsTopic): LiveNewsItem[] {
   const matching =
     topic === 'Top Stories'
       ? NEWS_ARTICLES
       : NEWS_ARTICLES.filter((a) => a.topic === topic);
   const list = matching.length > 0 ? matching : NEWS_ARTICLES;
-  return list.map((a) => ({
-    id: a.id,
-    title: a.title,
-    summary: a.summary,
-    url: `https://news.google.com/search?q=${encodeURIComponent(a.title)}&hl=en-SG&gl=SG&ceid=SG:en`,
-    imageUrl: null,
-    sourceFaviconUrl: null,
-    source: a.source,
-    publishedAt: '',
-    publishedAgo: a.publishedAgo,
-    topic: a.topic,
-    illustration: a.illustration,
-  }));
+  return list.map((a) => {
+    const domain = SOURCE_DOMAIN_MAP[a.source] ?? 'news.google.com';
+    return {
+      id: a.id,
+      title: a.title,
+      summary: a.summary,
+      url: `https://news.google.com/search?q=${encodeURIComponent(a.title)}&hl=en-SG&gl=SG&ceid=SG:en`,
+      imageUrl: null,
+      sourceFaviconUrl: `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`,
+      source: a.source,
+      publishedAt: '',
+      publishedAgo: a.publishedAgo,
+      topic: a.topic,
+      illustration: a.illustration,
+    };
+  });
 }
 
 function ArticleThumbnail({
@@ -162,7 +273,7 @@ export const NewsFeedSection: React.FC<NewsFeedSectionProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [articles, setArticles] = useState<LiveNewsItem[]>([]);
   const [portalUrl, setPortalUrl] = useState<string>(TOPIC_GOOGLE_NEWS_LINKS['Top Stories']);
-  const [googleLogoUrl, setGoogleLogoUrl] = useState<string | null>(null);
+  const [googleLogoUrl, setGoogleLogoUrl] = useState<string | null>(GOOGLE_NEWS_LOGO_URL);
   const [loading, setLoading] = useState<boolean>(true);
   const [usingFallback, setUsingFallback] = useState<boolean>(false);
 
@@ -202,10 +313,22 @@ export const NewsFeedSection: React.FC<NewsFeedSectionProps> = ({
       }
       setArticles(data.items ?? []);
       setPortalUrl(data.googleNewsPortalUrl || TOPIC_GOOGLE_NEWS_LINKS[topic]);
-      setGoogleLogoUrl(data.googleLogoUrl ?? null);
+      setGoogleLogoUrl(data.googleLogoUrl || GOOGLE_NEWS_LOGO_URL);
     } catch {
+      try {
+        const directItems = await fetchDirectGoogleNewsFallback(topic);
+        if (directItems.length > 0) {
+          setArticles(directItems);
+          setPortalUrl(TOPIC_GOOGLE_NEWS_LINKS[topic]);
+          setGoogleLogoUrl(GOOGLE_NEWS_LOGO_URL);
+          return;
+        }
+      } catch {
+        // Fall through to curated Singapore Google News briefings
+      }
       setArticles(buildFallbackItems(topic));
       setPortalUrl(TOPIC_GOOGLE_NEWS_LINKS[topic]);
+      setGoogleLogoUrl(GOOGLE_NEWS_LOGO_URL);
       setUsingFallback(true);
     } finally {
       setLoading(false);
@@ -384,9 +507,17 @@ export const NewsFeedSection: React.FC<NewsFeedSectionProps> = ({
                       href={leadArticle.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="md:col-span-5 bg-slate-100 min-h-56 block overflow-hidden"
+                      title="Read story on news.google.com"
+                      className="md:col-span-5 bg-slate-100 min-h-56 block overflow-hidden relative group"
                     >
-                      <ArticleThumbnail article={leadArticle} />
+                      <ArticleThumbnail
+                        article={leadArticle}
+                        className="group-hover:scale-[1.02] transition-transform duration-300"
+                      />
+                      <span className="absolute bottom-2.5 left-2.5 inline-flex items-center gap-1 bg-slate-950/80 text-white text-[11px] font-medium px-2 py-1 rounded">
+                        <span>news.google.com</span>
+                        <ExternalLink className="w-3 h-3" aria-hidden="true" />
+                      </span>
                     </a>
                     <div className="md:col-span-7 p-6 flex flex-col justify-between">
                       <div>
@@ -481,9 +612,17 @@ export const NewsFeedSection: React.FC<NewsFeedSectionProps> = ({
                             href={article.url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="h-40 w-full bg-slate-100 border-b border-slate-200 block overflow-hidden"
+                            title="Read story on news.google.com"
+                            className="h-40 w-full bg-slate-100 border-b border-slate-200 block overflow-hidden relative group"
                           >
-                            <ArticleThumbnail article={article} />
+                            <ArticleThumbnail
+                              article={article}
+                              className="group-hover:scale-[1.02] transition-transform duration-300"
+                            />
+                            <span className="absolute bottom-2 left-2 inline-flex items-center gap-1 bg-slate-950/80 text-white text-[11px] font-medium px-2 py-0.5 rounded">
+                              <span>news.google.com</span>
+                              <ExternalLink className="w-2.5 h-2.5" aria-hidden="true" />
+                            </span>
                           </a>
                           <div className="p-5">
                             <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 mb-1.5">
